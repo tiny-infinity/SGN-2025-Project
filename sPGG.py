@@ -3,14 +3,15 @@ import matplotlib.pyplot as plt
 import random as rnd
 from matplotlib import colors
 import matplotlib.animation as animation
-
-
+from tqdm import tqdm
+import time
+import matplotlib.patches as mpatches
 class Agent(object):
 
     def __init__(self,pos,strategy,c1,c2):
         self._pos = pos # of form (i,j)
         self._strategy = strategy # coop, ch1 or ch2
-        self._payoff = 5.0 #baseline fitness (?)
+        self._payoff = 0.0 #baseline fitness (?)
 
 
         if self._strategy == 'coop':  #cooperator produces both goods
@@ -146,128 +147,137 @@ class Population(object):
     def local_good2_payoff(self,group,r2):
         total_c2 = sum(a._good_2 for a in group)
         return r2*total_c2/len(group)
-
-
+    
 # Accumulating payoffs when T_reproduction =/= T_games
 
     def accumulate_payoffs_localized(self,r1,r2):
         for agent in self._agents:
-            agent._payoff += self.total_payoff(agent,r1,r2)
+            agent._payoff += self.local_total_payoff(agent,r1,r2)
 
     def accumulate_payoffs_hybrid(self,r1,r2):
         global_benefit = self.global_good2_benefit(r2)
         for agent in self._agents:
             agent._payoff += self.hybrid_total_payoff(agent,r1,r2,global_benefit)
 
-    def accumulate_payoffs_mixed(self,r1,r2):
-        global_benefit = self.global_good1_benefit(r1) + self.global_good2_benefit(r1)
+    def accumulate_payoffs_homo(self,r1,r2):
+
+        gb1 = self.global_good1_benefit(r1)
+        gb2 = self.global_good2_benefit(r2)
+        
         for agent in self._agents:
-            agent._payoff += self.homo_total_payoff(agent,r1,r2,global_benefit)
+            agent._payoff += self.homo_total_payoff(agent,gb1,gb2)
 
 
 # Total payoff of a single agent when playing with either local or global goods
-    def hybrid_total_payoff(self,agent,r1,r2,global_benefit):
+    def hybrid_total_payoff(self,agent,r1,r2,global_benefit_2):
+        local_payoff_1 = 0.0
+        focal_agents = [agent] + self._neighbours[agent]
+        
+        for focal in focal_agents:
+            group = self.get_focal_group(focal)
+
+            local_payoff_1+=self.local_good1_payoff(group,r1) #good_1 -> local
+        
+        return ((local_payoff_1/len(focal_agents)) + global_benefit_2 - (agent._good_1 + agent._good_2) )
+
+    def homo_total_payoff(self,agent,global_benefit_1,global_benefit_2):
+        
+        return global_benefit_1 + global_benefit_2 - (agent._good_1 + agent._good_2)
+
+
+    def local_total_payoff(self,agent,r1,r2): #r's are the synergy factor
         payoff = 0.0
         focal_agents = [agent] + self._neighbours[agent]
 
         for focal in focal_agents:
             group = self.get_focal_group(focal)
-            payoff+=self.local_good1_payoff(group,r1)
-
-        payoff -= agent._good_1 
-        payoff -= agent._good_2 
-        payoff += global_benefit
-
-        return payoff/len(focal_agents)
-
-    def homo_total_payoff(self,agent,r1,r2,global_benefit):
-        payoff = 0.0
-        focal_agents = [agent] + self._neighbours[agent]
-
-        payoff -= (agent._good_1 + agent._good_2)
-        payoff += global_benefit
-
-        return payoff/len(focal_agents)
-
-    def total_payoff(self,agent,r1,r2): #r's are the synergy factor
-        payoff = 0.0
-        focal_agents = [agent] + self._neighbours[agent]
-
-        for focal in focal_agents:
-            group = self.get_focal_group(focal)
-            payoff+=self.local_good1_payoff(group,r1) + self.local_good2_payoff(group,r2)
-
-        payoff -= (agent._good_1 + agent._good_2)
-
-        return payoff/len(focal_agents)
-
-
+            payoff += (self.local_good1_payoff(group,r1) + self.local_good2_payoff(group,r2))
+            
+        return (payoff/len(focal_agents)) - (agent._good_1 + agent._good_2)
+    
+    def copy_strategy(self, agent, model, c1, c2):
+        # Directly copy the string to avoid logic errors
+        new_strat = model.get_strategy()
+        agent._strategy = new_strat
+    
+    # Manually map production values and colors
+        if new_strat == 'coop':
+            agent._good_1, agent._good_2, agent._cval = c1, c2, 0
+        elif new_strat == 'ch1':
+            agent._good_1, agent._good_2, agent._cval = 0, c2, 1
+        elif new_strat == 'ch2':
+            agent._good_1, agent._good_2, agent._cval = c1, 0, 2
+    
 #MC updates for games + reproductive events
 # done based on Fermi update rule
-    def hybrid_monte_carlo_update(self,r1,r2,K,n_interactions, c1, c2):
+
+    def hybrid_monte_carlo_update(self,r1,r2,K,n_interactions, c1, c2,w=0.5):
 
         for _ in range(n_interactions):
             self.accumulate_payoffs_hybrid(r1,r2)
 
         agents = np.random.permutation(self._agents)
         for agent in agents:
-            neighbours = self._neighbours[agent]
-            model = np.random.choice(neighbours)
+            if np.random.rand()<w:
+                neighbours = self._neighbours[agent]
+                model = np.random.choice(neighbours)
 
-            Pi = agent._payoff
-            Pj = model._payoff 
+                Pi = agent._payoff
+                Pj = model._payoff 
 
-            prob = 1.0 / (1.0 + np.exp((Pi-Pj)/K))
+                prob = 1.0 / (1.0 + np.exp((Pi-Pj)/K))
 
-            if np.random.rand() < prob:
-                agent.__init__(agent.get_pos(), model.get_strategy(), c1, c2)
+                if np.random.rand() < prob:
+                    self.copy_strategy(agent,model,c1,c2)
 
         for agent in self._agents:
             agent.reset_payoff()
 
-    def homo_monte_carlo_update(self,r1,r2,K,n_interactions,c1,c2):
+    def homo_monte_carlo_update(self,r1,r2,K,n_interactions,c1,c2,w=0.5):
         
         for _ in range(n_interactions):
-            self.accumulate_payoffs_mixed(r1,r2)
+            self.accumulate_payoffs_homo(r1,r2)
 
         agents = np.random.permutation(self._agents)
         for agent in agents:
-            neighbours = self._neighbours[agent]
-            model = np.random.choice(neighbours)
+            if np.random.rand()<w:
+                neighbours = self._neighbours[agent]
+                model = np.random.choice(neighbours)
 
-            Pi = agent._payoff
-            Pj = model._payoff 
+                Pi = agent._payoff
+                Pj = model._payoff 
+            
 
-            prob = 1.0 / (1.0 + np.exp((Pi-Pj)/K))
+                prob = 1.0 / (1.0 + np.exp((Pi-Pj)/K))
 
-            if np.random.rand() < prob:
-                agent.__init__(agent.get_pos(), model.get_strategy(), c1, c2)
+                if np.random.rand() < prob:
+                    self.copy_strategy(agent,model,c1,c2)
 
         for agent in self._agents:
             agent.reset_payoff()
 
-    def localized_monte_carlo_update(self,r1,r2,K,n_interactions,c1,c2):
+    def localized_monte_carlo_update(self,r1,r2,K,n_interactions,c1,c2,w=0.5):
 
         for _ in range(n_interactions):
-            self.accumulate_payoffs_mixed(r1,r2)
+            self.accumulate_payoffs_localized(r1,r2)
 
         agents = np.random.permutation(self._agents)
 
         for agent in agents:
-            neighbours = self._neighbours[agent]
-            model = np.random.choice(neighbours)
+            if np.random.rand()<w:
+                neighbours = self._neighbours[agent]
+                model = np.random.choice(neighbours)
 
-            Pi = agent._payoff
-            Pj = model._payoff
+                Pi = agent._payoff
+                Pj = model._payoff
 
-            prob = 1.0/(1.0 + np.exp((Pi-Pj)/K))
+                prob = 1.0/(1.0 + np.exp((Pi-Pj)/K))
 
-            if np.random.rand() < prob:
-                agent.__init__(agent.get_pos(), model.get_strategy(), c1, c2)
+                if np.random.rand() < prob:
+                    self.copy_strategy(agent,model,c1,c2)
 
         for agent in self._agents:
             agent.reset_payoff()
-
 
     def pop_composition(self):
         """
@@ -301,7 +311,7 @@ class Population(object):
 
         if show:
             fig,ax = plt.subplots(figsize=(6,6))
-            cmap  = colors.ListedColormap(['blue','green','pink'])
+            cmap  = colors.ListedColormap(['#004488','#DDAA33','#BB5566'])
             ax.imshow(lattice,cmap=cmap,origin='upper')
             plt.title("Population")
             plt.show()
@@ -321,32 +331,163 @@ def run_simulation_hybrid(sim_params,file_name):
     init_comp = sim_params['composition']
     c1 = sim_params['cost_good_1']
     c2 = sim_params['cost_good_2']
+    init_matrix = sim_params['init_arrangement']
+    sim_type = sim_params['sim_type']
+    num_frames = sim_params['num_frames']
 
-    fig,ax=plt.subplots(figsize=(12,6))
-    cmap  = colors.ListedColormap(['blue','green','pink'])
-
+    
+    
+    print("Initializing Population...")
     population = Population(pop_size)
-    population.initialize_population(init_comp)
+    if sim_type == 'frequency':
+        population.initialize_population(init_comp=init_comp,c1=c1,c2=c2)
+
+    else:
+        population.initialize_from_matrix(init_matrix,c1=c1,c2=c2)
+    print("Building Neighbour Cache...")
     population.build_neighbour_cache()
 
     init_frame = population.lattice()
-    img = ax.imshow(init_frame,cmap=cmap)
-
-    def update(frame):
-        population.hybrid_monte_carlo_update(r1,r2,K,10,c1,c2)
-        new_data = population.lattice()
-        img.set_data(new_data)
-        return [img]
     
-    ani = animation.FuncAnimation(fig,update,frames=300,interval=100,blit=True)
-    ani.save(f'{file_name}.mp4',writer='ffmpeg',fps=30)
+    print("Running simulations...")
+    history = []
+    for i in tqdm(range(num_frames),unit="generations",leave=True):
+        population.hybrid_monte_carlo_update(r1,r2,K,10,c1,c2)
+        history.append(population.lattice())
+
+    print("Animating...")
+    fig,ax=plt.subplots(figsize=(12,6))
+    ax.set_title(f"Hybrid System ; r1(local)={r1}, r2(global)={r2} ; c1/c2 = {c1/c2}")
+    colors_list= ['#004488','#DDAA33','#BB5566']
+    cmap  = colors.ListedColormap(colors_list)
+    ax.scatter(1,1,color=colors_list[0],label='Coop')
+    ax.scatter(1,2,color=colors_list[1],label='Ch-1')
+    ax.scatter(2,1,color=colors_list[2],label='Ch-2')
+
+    ims = []
+    for data in history:
+        img = ax.imshow(data,cmap=cmap,animated=True)
+        ims.append([img])
+    ax.legend(loc='lower center',bbox_to_anchor=(0.5,-0.1),ncol=3,scatterpoints=1)
+    ani = animation.ArtistAnimation(fig,ims,interval=50,blit=True,repeat_delay=1000)
+
+    print("Saving File...")
+    ani.save(f"{file_name}.mp4",writer='ffmpeg',fps=30)
+    
     plt.show()
-   
 
-sim_params_0 = {'N':100,'synergy_factor_1':1,'synergy_factor_2':1,'noise':10,'composition':None}
-sim_params_1 = {'N':100,'synergy_factor_1':5,'synergy_factor_2':2,'noise':1.0,'composition':None}
+def run_simulation_homo(sim_params,file_name):
+    """
+    Runs simulation for set number of frames/generations
+    Saves the animation as  file_name.mp4
+    """
+    pop_size = sim_params['N']
+    r1 = sim_params['synergy_factor_1']
+    r2 = sim_params['synergy_factor_2']
+    K = sim_params['noise']
+    init_comp = sim_params['composition']
+    c1 = sim_params['cost_good_1']
+    c2 = sim_params['cost_good_2']
+    init_matrix = sim_params['init_arrangement']
+    sim_type = sim_params['sim_type']
+    num_frames = sim_params['num_frames']
 
-if __name__=="main":
-    run_simulation_hybrid(sim_params_1,"standard_1")
+    
+    
+    print("Initializing Population...")
+    population = Population(pop_size)
+    if sim_type == 'frequency':
+        population.initialize_population(init_comp=init_comp,c1=c1,c2=c2)
+
+    else:
+        population.initialize_from_matrix(init_matrix,c1=c1,c2=c2)
+    print("Building Neighbour Cache...")
+    population.build_neighbour_cache()
+
+    init_frame = population.lattice()
+    
+    print("Running simulations...")
+    history = []
+    for i in tqdm(range(num_frames),unit="generations",leave=True):
+        population.homo_monte_carlo_update(r1,r2,K,1,c1,c2)
+        history.append(population.lattice())
+
+    print("Animating...")
+    fig,ax=plt.subplots(figsize=(12,6))
+    ax.set_title(f"Two global goods ; r1={r1}, r2={r2} ; c1/c2 = {c1/c2}")
+    colors_list = ['#004488','#DDAA33','#BB5566']
+    cmap  = colors.ListedColormap(colors_list)
+    ims = []
+    for data in history:
+        img = ax.imshow(data,cmap=cmap,animated=True)
+        ims.append([img])
+    
+    ax.legend(loc='lower center',bbox_to_anchor=(0.5,-0.1),ncol=3,scatterpoints=1)
+    ax.set_xlim(0,pop_size)
+    ax.set_ylim(pop_size,0)
+    ani = animation.ArtistAnimation(fig,ims,interval=50,blit=True,repeat_delay=1000)
+
+    print("Saving File...")
+    ani.save(f"{file_name}.mp4",writer='ffmpeg',fps=30)
+    
+    plt.show()
+
+def run_simulation_localized(sim_params,file_name):
+    """
+    Runs simulation for set number of frames/generations
+    Saves the animation as  file_name.mp4
+    """
+    pop_size = sim_params['N']
+    r1 = sim_params['synergy_factor_1']
+    r2 = sim_params['synergy_factor_2']
+    K = sim_params['noise']
+    init_comp = sim_params['composition']
+    c1 = sim_params['cost_good_1']
+    c2 = sim_params['cost_good_2']
+    init_matrix = sim_params['init_arrangement']
+    sim_type = sim_params['sim_type']
+    num_frames = sim_params['num_frames']
+
+    
+    
+    print("Initializing Population...")
+    population = Population(pop_size)
+    if sim_type == 'frequency':
+        population.initialize_population(init_comp=init_comp,c1=c1,c2=c2)
+
+    else:
+        population.initialize_from_matrix(init_matrix,c1=c1,c2=c2)
+    print("Building Neighbour Cache...")
+    population.build_neighbour_cache()
+
+    init_frame = population.lattice()
+    
+    print("Running simulations...")
+    history = []
+    for i in tqdm(range(num_frames),unit="generations",leave=True):
+        population.localized_monte_carlo_update(r1,r2,K,10,c1,c2)
+        history.append(population.lattice())
+
+    print("Animating...")
+    fig,ax=plt.subplots(figsize=(12,6))
+    ax.set_title(f"Two localized goods ; r1={r1}, r2={r2} ; c1/c2 = {c1/c2}")
+    colors_list = ['#004488','#DDAA33','#BB5566']
+    cmap  = colors.ListedColormap(colors_list)
+    ims = []
+    for data in history:
+        img = ax.imshow(data,cmap=cmap,animated=True)
+        ims.append([img])
+
+
+    ax.legend(loc='lower center',bbox_to_anchor=(0.5,-0.1),ncol=3,scatterpoints=1)
+    ani = animation.ArtistAnimation(fig,ims,interval=50,blit=True,repeat_delay=1000)
+
+    print("Saving File...")
+    ani.save(f"{file_name}.mp4",writer='ffmpeg',fps=30)
+    
+    plt.show()
+
+
+
 
 
