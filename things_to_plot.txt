@@ -1,0 +1,6 @@
+- mixed, same cost goods, different synergy factor
+- localized, same cost goods, different synergy factor'
+- mixed, different cost goods, same synergy factor
+- localized, different cost, goods, same synergy factor
+- rescue of cheaper good cheater by higher synergy factor of cheaper good 
+- hybrid behaviour : same costs, rescue by synergy factor 

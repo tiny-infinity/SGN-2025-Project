@@ -294,7 +294,7 @@ class Population(object):
             elif agent.get_strategy() == 'ch2':
                 ch2+=1
 
-        return (coop/N, ch1/N, ch2/N)
+        return [coop/N, ch1/N, ch2/N]
 
 
     def lattice(self,show=False):
@@ -319,62 +319,6 @@ class Population(object):
         return lattice
 
 
-def run_simulation_hybrid(sim_params,file_name):
-    """
-    Runs simulation for set number of frames/generations
-    Saves the animation as  file_name.mp4
-    """
-    pop_size = sim_params['N']
-    r1 = sim_params['synergy_factor_1']
-    r2 = sim_params['synergy_factor_2']
-    K = sim_params['noise']
-    init_comp = sim_params['composition']
-    c1 = sim_params['cost_good_1']
-    c2 = sim_params['cost_good_2']
-    init_matrix = sim_params['init_arrangement']
-    sim_type = sim_params['sim_type']
-    num_frames = sim_params['num_frames']
-
-    
-    
-    print("Initializing Population...")
-    population = Population(pop_size)
-    if sim_type == 'frequency':
-        population.initialize_population(init_comp=init_comp,c1=c1,c2=c2)
-
-    else:
-        population.initialize_from_matrix(init_matrix,c1=c1,c2=c2)
-    print("Building Neighbour Cache...")
-    population.build_neighbour_cache()
-
-    init_frame = population.lattice()
-    
-    print("Running simulations...")
-    history = []
-    for i in tqdm(range(num_frames),unit="generations",leave=True):
-        population.hybrid_monte_carlo_update(r1,r2,K,10,c1,c2)
-        history.append(population.lattice())
-
-    print("Animating...")
-    fig,ax=plt.subplots(figsize=(12,6))
-    ax.set_title(f"Hybrid System ; r1(local)={r1}, r2(global)={r2} ; c1/c2 = {c1/c2}")
-    colors_list= ['#004488','#DDAA33','#BB5566']
-    cmap  = colors.ListedColormap(colors_list)
-    ax.scatter(1,1,color=colors_list[0],label='Coop')
-    ax.scatter(1,2,color=colors_list[1],label='Ch-1')
-    ax.scatter(2,1,color=colors_list[2],label='Ch-2')
-
-    ims = []
-    for data in history:
-        img = ax.imshow(data,cmap=cmap,animated=True)
-        ims.append([img])
-    ax.legend(loc='lower center',bbox_to_anchor=(0.5,-0.1),ncol=3,scatterpoints=1)
-    ani = animation.ArtistAnimation(fig,ims,interval=50,blit=True,repeat_delay=1000)
-
-    print("Saving File...")
-    ani.save(f"{file_name}.mp4",writer='ffmpeg',fps=30)
-    
-    plt.show()
 
 def run_simulation_homo(sim_params,file_name):
     """
@@ -407,30 +351,150 @@ def run_simulation_homo(sim_params,file_name):
     init_frame = population.lattice()
     
     print("Running simulations...")
-    history = []
-    for i in tqdm(range(num_frames),unit="generations",leave=True):
-        population.homo_monte_carlo_update(r1,r2,K,1,c1,c2)
-        history.append(population.lattice())
+    N = pop_size
+    freq_series=[]
+
+    lattice_snapshot = population.lattice()
+    unique, counts = np.unique(lattice_snapshot, return_counts=True)
+    count_dict = dict(zip(unique, counts))
+    
+    print("-" * 30)
+    print("DIAGNOSTIC CHECK (Before Animation):")
+    print(f"Lattice Color Counts (Should see 0.0 for Coops): {count_dict}")
+    
+    freqs = population.pop_composition()
+    print(f"Strategy Frequencies (Coop, Ch1, Ch2): {freqs}")
+    
+    if freqs[0] > 0 and 0.0 not in count_dict:
+        print("CRITICAL WARNING: Cooperators exist in data, but have wrong color code!")
+    elif 0.0 in count_dict:
+        print(f"CONFIRMED: There are {count_dict[0.0]} Blue pixels ready to plot.")
+    print("-" * 30)
+    # ------------------------
 
     print("Animating...")
-    fig,ax=plt.subplots(figsize=(12,6))
+    fig, ax = plt.subplots(figsize=(12,6))
     ax.set_title(f"Two global goods ; r1={r1}, r2={r2} ; c1/c2 = {c1/c2}")
-    colors_list = ['#004488','#DDAA33','#BB5566']
-    cmap  = colors.ListedColormap(colors_list)
-    ims = []
-    for data in history:
-        img = ax.imshow(data,cmap=cmap,animated=True)
-        ims.append([img])
-    
-    ax.legend(loc='lower center',bbox_to_anchor=(0.5,-0.1),ncol=3,scatterpoints=1)
-    ax.set_xlim(0,pop_size)
-    ax.set_ylim(pop_size,0)
-    ani = animation.ArtistAnimation(fig,ims,interval=50,blit=True,repeat_delay=1000)
 
-    print("Saving File...")
-    ani.save(f"{file_name}.mp4",writer='ffmpeg',fps=30)
+    colors_list = ['#004488','#DDAA33','#BB5566']
+    cmap = colors.ListedColormap(colors_list)
+    norm = colors.BoundaryNorm([-0.5, 0.5, 1.5, 2.5], cmap.N)
+
+    img = ax.imshow(
+    population.lattice(),
+    cmap=cmap,
+    norm=norm,
+    interpolation="nearest",
+    )
+
+    ax.set_xticks([])
+    ax.set_yticks([])
+
+    def update(frame):
+        population.homo_monte_carlo_update(r1, r2, K, 5, c1, c2)
+        lattice = population.lattice()
+        freq_series.append(population.pop_composition())
+        img.set_data(population.lattice())
+        return (img,)
     
+    ani = animation.FuncAnimation(
+    fig,
+    update,
+    frames=num_frames,
+    interval=50,
+    blit=False )
+    
+    ani.save(f"{file_name}.mp4", writer="ffmpeg", fps=30)
     plt.show()
+    return np.array(freq_series)
+
+def run_simulation_hybrid(sim_params,file_name):
+    """
+    Runs simulation for set number of frames/generations
+    Saves the animation as  file_name.mp4
+    """
+    pop_size = sim_params['N']
+    r1 = sim_params['synergy_factor_1']
+    r2 = sim_params['synergy_factor_2']
+    K = sim_params['noise']
+    init_comp = sim_params['composition']
+    c1 = sim_params['cost_good_1']
+    c2 = sim_params['cost_good_2']
+    init_matrix = sim_params['init_arrangement']
+    sim_type = sim_params['sim_type']
+    num_frames = sim_params['num_frames']
+
+    
+    
+    print("Initializing Population...")
+    population = Population(pop_size)
+    if sim_type == 'frequency':
+        population.initialize_population(init_comp=init_comp,c1=c1,c2=c2)
+
+    else:
+        population.initialize_from_matrix(init_matrix,c1=c1,c2=c2)
+    print("Building Neighbour Cache...")
+    population.build_neighbour_cache()
+
+    init_frame = population.lattice()
+    
+    print("Running simulations...")
+    N = pop_size
+    freq_series=[]
+
+    lattice_snapshot = population.lattice()
+    unique, counts = np.unique(lattice_snapshot, return_counts=True)
+    count_dict = dict(zip(unique, counts))
+    
+    print("-" * 30)
+    print("DIAGNOSTIC CHECK (Before Animation):")
+    print(f"Lattice Color Counts (Should see 0.0 for Coops): {count_dict}")
+    
+    freqs = population.pop_composition()
+    print(f"Strategy Frequencies (Coop, Ch1, Ch2): {freqs}")
+    
+    if freqs[0] > 0 and 0.0 not in count_dict:
+        print("CRITICAL WARNING: Cooperators exist in data, but have wrong color code!")
+    elif 0.0 in count_dict:
+        print(f"CONFIRMED: There are {count_dict[0.0]} Blue pixels ready to plot.")
+    print("-" * 30)
+    # ------------------------
+
+    print("Animating...")
+    fig, ax = plt.subplots(figsize=(12,6))
+    ax.set_title(f"Mixed type global goods ; r1(local)={r1}, r2(global)={r2} ; c1/c2 = {c1/c2}")
+
+    colors_list = ['#004488','#DDAA33','#BB5566']
+    cmap = colors.ListedColormap(colors_list)
+    norm = colors.BoundaryNorm([-0.5, 0.5, 1.5, 2.5], cmap.N)
+
+    img = ax.imshow(
+    population.lattice(),
+    cmap=cmap,
+    norm=norm,
+    interpolation="nearest",
+    )
+
+    ax.set_xticks([])
+    ax.set_yticks([])
+
+    def update(frame):
+        population.hybrid_monte_carlo_update(r1, r2, K, 5, c1, c2)
+        lattice = population.lattice()
+        freq_series.append(population.pop_composition())
+        img.set_data(population.lattice())
+        return (img,)
+    
+    ani = animation.FuncAnimation(
+    fig,
+    update,
+    frames=num_frames,
+    interval=50,
+    blit=False )
+    
+    ani.save(f"{file_name}.mp4", writer="ffmpeg", fps=30)
+    plt.show()
+    return np.array(freq_series)
 
 def run_simulation_localized(sim_params,file_name):
     """
@@ -463,30 +527,62 @@ def run_simulation_localized(sim_params,file_name):
     init_frame = population.lattice()
     
     print("Running simulations...")
-    history = []
-    for i in tqdm(range(num_frames),unit="generations",leave=True):
-        population.localized_monte_carlo_update(r1,r2,K,10,c1,c2)
-        history.append(population.lattice())
+    N = pop_size
+    freq_series=[]
+
+    lattice_snapshot = population.lattice()
+    unique, counts = np.unique(lattice_snapshot, return_counts=True)
+    count_dict = dict(zip(unique, counts))
+    
+    print("-" * 30)
+    print("DIAGNOSTIC CHECK (Before Animation):")
+    print(f"Lattice Color Counts (Should see 0.0 for Coops): {count_dict}")
+    
+    freqs = population.pop_composition()
+    print(f"Strategy Frequencies (Coop, Ch1, Ch2): {freqs}")
+    
+    if freqs[0] > 0 and 0.0 not in count_dict:
+        print("CRITICAL WARNING: Cooperators exist in data, but have wrong color code!")
+    elif 0.0 in count_dict:
+        print(f"CONFIRMED: There are {count_dict[0.0]} Blue pixels ready to plot.")
+    print("-" * 30)
+    # ------------------------
 
     print("Animating...")
-    fig,ax=plt.subplots(figsize=(12,6))
-    ax.set_title(f"Two localized goods ; r1={r1}, r2={r2} ; c1/c2 = {c1/c2}")
+    fig, ax = plt.subplots(figsize=(12,6))
+    ax.set_title(f"Two Local goods ; r1={r1}, r2={r2} ; c1/c2 = {c1/c2}")
+
     colors_list = ['#004488','#DDAA33','#BB5566']
-    cmap  = colors.ListedColormap(colors_list)
-    ims = []
-    for data in history:
-        img = ax.imshow(data,cmap=cmap,animated=True)
-        ims.append([img])
+    cmap = colors.ListedColormap(colors_list)
+    norm = colors.BoundaryNorm([-0.5, 0.5, 1.5, 2.5], cmap.N)
 
+    img = ax.imshow(
+    population.lattice(),
+    cmap=cmap,
+    norm=norm,
+    interpolation="nearest",
+    )
 
-    ax.legend(loc='lower center',bbox_to_anchor=(0.5,-0.1),ncol=3,scatterpoints=1)
-    ani = animation.ArtistAnimation(fig,ims,interval=50,blit=True,repeat_delay=1000)
+    ax.set_xticks([])
+    ax.set_yticks([])
 
-    print("Saving File...")
-    ani.save(f"{file_name}.mp4",writer='ffmpeg',fps=30)
+    def update(frame):
+        population.localized_monte_carlo_update(r1, r2, K, 5, c1, c2)
+        lattice = population.lattice()
+        freq_series.append(population.pop_composition())
+        img.set_data(population.lattice())
+        return (img,)
     
+    ani = animation.FuncAnimation(
+    fig,
+    update,
+    frames=num_frames,
+    interval=50,
+    blit=False )
+    
+    ani.save(f"{file_name}.mp4", writer="ffmpeg", fps=30)
     plt.show()
-
+    return np.array(freq_series)
 
 
 
