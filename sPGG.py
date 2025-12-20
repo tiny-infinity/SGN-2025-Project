@@ -246,6 +246,8 @@ class Population(object):
 
                 Pi = agent._payoff
                 Pj = model._payoff 
+
+                
             
 
                 prob = 1.0 / (1.0 + np.exp((Pi-Pj)/K))
@@ -270,6 +272,8 @@ class Population(object):
 
                 Pi = agent._payoff
                 Pj = model._payoff
+
+                print(Pi-Pj)
 
                 prob = 1.0/(1.0 + np.exp((Pi-Pj)/K))
 
@@ -511,6 +515,8 @@ def run_simulation_localized(sim_params,file_name):
     init_matrix = sim_params['init_arrangement']
     sim_type = sim_params['sim_type']
     num_frames = sim_params['num_frames']
+    save_movie = sim_params['save_movie']
+    show_anim = sim_params['show_anim']
 
     
     
@@ -579,9 +585,12 @@ def run_simulation_localized(sim_params,file_name):
     frames=num_frames,
     interval=50,
     blit=False )
+    if save_movie==True:
+        print("Saving...")
+        ani.save(f"{file_name}.mp4", writer="ffmpeg", fps=30)
     
-    ani.save(f"{file_name}.mp4", writer="ffmpeg", fps=30)
-    plt.show()
+    if show_anim == True:
+        plt.show()
     return np.array(freq_series)
 
 
