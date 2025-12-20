@@ -12,13 +12,16 @@ There are two public goods - with costs $c_1$ and $c_2$. The three strategies in
 
 #### global Public Goods Game
 In the global case, goods produced by an individual can be diffused to any individual anywhere on the lattice. This represents homogenous, well-mixed conditions. Benefits obtained by an individual are independent of its position and neighbours. In an iteration, the payoff of agent i is  given by:
+
 $$
 P_{i}^{(global)}=(\dfrac{r_{1}\sum_{k=1}^{N}c_{1,k}}{N})+(\dfrac{r_{2}\sum_{k=1}^{N}c_{2,k}}{N})-(c_{1,i}+c_{2,i})
 $$
+
 where $r_1$ and $r_2$ are the synergy factors of the goods.
 
 #### local Public Goods Game
 In the local case, goods produced by an individual can be shared only with its neighbours. In our program, the neighbours of an agent are the agents in its' Moore Neighbourhood (1 on each cardinal direction + 4 diagonal elements = 8). This alters the dynamics since the benefit of an individual is a function of its neighbourhood and position on the lattice. Payoffs given by:
+
 $$
 P_{i}^{(local)}={\dfrac{1}{M}\sum_{j \in G_{i} \cup {i}}(\dfrac{r_{1}\sum_{k \in G_{j}}c_{1,k}}{M} + \dfrac{r_{2}\sum_{k \in G_{j}}c_{2,k}}{M})}-(c_{1,i}+c_{2,i})
 $$
